@@ -1,0 +1,1114 @@
+---
+title: "Anatomy 3"
+author: "Marco D'Agostino"
+date: "06/05/2022"
+output:
+  html_document:
+    smart: FALSE
+    code_folding: hide #  Cache le code  
+    collapsed: yes # Crée un document unique 
+    fig_caption: no # Figures encapsulées ? 
+    fig_height: 5 # Hauteur par défaut des figures
+    fig_width: 6 # Largeur par défaut des figures
+    highlight: tango # Style de mise en valeur du code
+    number_sections: yes # Ajout table des matières 
+    theme: united  # Style du document
+    toc: yes # Table des matiere ?
+    toc_depth: 3  # Profondeur table des matières<
+    toc_float: yes # Table des matières flottante a
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+# R Chunks options
+knitr::opts_chunk$set(comment="")
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) # Set working directory to the current file
+rm(list = ls())
+
+# Packages
+require(readxl)
+require(pander)
+require(dplyr)
+require(car)
+require(Hmisc)
+require(EnvStats)
+require(emmeans)
+require(visreg)
+require(sjplot)
+require(FactoMineR)
+require(factoextra)
+require(ggplot2)
+library(viridis)
+library(hrbrthemes)
+require(knitr)
+require(gridExtra)
+require(extrafont)
+require(sjPlot)
+require(epitools)
+require(corrplot)
+require(NbClust)
+require(pastecs)
+require(kohonen)
+require(data.table)
+require(tidyverse)
+library("SciViews")
+
+library(sp)
+library(xml2)
+library(plyr)
+library(deldir)
+library(alphahull)
+library(cowplot)
+library(retistruct)
+library(Hmisc)
+
+# Path to data
+q_path <- "Data/Quantification/clean/"
+
+# Load functions
+source("functions.R")
+
+# Fonts
+windowsFonts(A = windowsFont("Cambria"))
+```
+
+# Import data (1)
+
+Merge all data of cross sections into one database
+
+```{r}
+anatomy_DB <- data.frame(cs_id = c(),
+                         name = c(),
+                         type = c(),
+                         value = c())
+
+# Make a list of all files names
+list <- list.files(path = q_path, pattern = "xlsx")
+
+for(k in seq(1:length(list))){
+  
+    
+
+    path = paste0(q_path, list[k])
+
+    # Generate the row of ids
+    cs_id <- extract_ids(list, k)
+    
+    print(paste0("Initializing incorporation of data from cross section ", cs_id$plant_id, " , segment", cs_id$segment))
+
+    # load file with the path
+    file <- read_xlsx(path)
+    sheets <- excel_sheets(path)
+
+    # Process each sheet
+    for(i in sheets){
+      
+      if(i == "Layers"){
+        #print("This is the layer")
+        temp_file <- read_xlsx(path, sheet = i)
+        
+        for (p in seq(1:length(temp_file$id))) {
+        
+          temp_df_layer <- data.frame(name = temp_file$name[p],
+                                      type = "nLayers",
+                                      value = temp_file$layers[p])
+          temp_df_layer2 <- merge(cs_id, temp_df_layer)
+          anatomy_DB <- rbind(anatomy_DB, temp_df_layer2)
+          
+          temp_df_radius <- data.frame(name = temp_file$name[p],
+                                       type = "radius",
+                                       value = temp_file$radius[p])
+          temp_df_radius2 <- merge(cs_id, temp_df_radius)
+          anatomy_DB <- rbind(anatomy_DB, temp_df_radius2)
+          }
+          
+        }
+        
+      else{
+        temp_file <- read_xlsx(path, sheet = i)
+        name = i
+  
+        # Process each params per sheet
+        types = colnames(temp_file) # we take from 2 because the first column is the id
+  
+        for (j in seq(from = 2,
+                      to = length(types),
+                      by = 1)) {
+  
+                                  temp_df <- data.frame(value = temp_file[[j]])
+                                  temp_df$name = i
+                                  temp_df$type = types[j]
+                                  # temp_df$measure_id = seq(from = 1,
+                                  #                          to = length(temp_df$value),
+                                  #                          by = 1)
+                          
+                                  temp_df2 <- merge(cs_id, temp_df)
+                                  anatomy_DB <- rbind(anatomy_DB, temp_df2)
+          
+        }
+      # end of j for
+    }
+    # end of else
+    } 
+    # end of i
+}
+# end of k for
+
+Plants <- read.csv("Data/Plants.csv")
+Plants <- subset(Plants, select = -c(X, repetition))
+anatomy_DB <- merge(x = anatomy_DB, y = Plants,
+                      by = "plant_id")
+
+Genotypes <- read.csv("Data/Genotypes.csv")
+Genotypes <- subset(Genotypes, select = -X)
+anatomy_DB <- merge(x = anatomy_DB, y = Genotypes[,c(2,3)],
+                      by = "gen_id")
+
+write.csv(anatomy_DB, "Data/Anatomy_full.csv")
+```
+
+# Import data (2)
+
+If previous chunk has already been executed, we simply can load csv :
+
+```{r}
+anatomy_DB <- read.csv("Data/Anatomy_full.csv")
+anatomy_DB$value <- as.numeric(anatomy_DB$value)
+anatomy_DB <- subset(anatomy_DB, select = -X)
+
+anatomy_full <- read.csv("Data/Anatomy.csv")
+anatomy_full <- subset(anatomy_full, select = -X)
+```
+
+some manipulations :
+
+```{r}
+anatomy_full <- anatomy_full %>% filter(segment != "S1")
+anatomy_full$segment2 <- 1
+anatomy_full$segment2[anatomy_full$segment == "S2"] = 2
+anatomy_full$segment2[anatomy_full$segment == "S3"] = 3
+anatomy_full$segment2[anatomy_full$segment == "S4"] = 4
+
+```
+
+# GGPlot function
+
+```{r}
+anatomy_plot <- function(Data = data,
+                         Title = title){
+  
+  ggplot(data = Data, aes(x = segment, y = value, fill = gen_id)) +
+    geom_point(aes(color = gen_id)) +
+    geom_boxplot() + 
+    
+    # stat_summary(fun.y = median, geom = "line", 
+    #              aes(group = gen_id, color = gen_id),
+    #              position = position_dodge(width = 0.9)) +
+    
+    #facet_wrap(~segment, ncol = 4) +
+    theme_bw() +
+    # scale_fill_manual(values = c("G" = "coral1", "A" =  "turquoise3")) +
+    #geom_jitter(color="black", size=0.4, alpha=0.9) + # Add points
+      
+    theme(axis.line = element_line(color='black'),
+        
+          # Remove grid
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          
+          # Change font
+          text = element_text(family = "A"),
+          
+          # Remove x ticks
+          #axis.text.x=element_blank(),
+          #axis.ticks.x=element_blank(),
+          
+          # Remove legend title
+          #legend.title=element_blank()
+          
+          # Remove legend
+          #legend.position="none"
+          
+          # Remove panel borders 
+          #panel.border = element_blank()
+          ) +
+    ggtitle(Title)
+  
+  
+  
+}
+```
+
+## 1. Xylem
+
+```{r}
+xylem_stats <- anatomy_full %>% filter(name == "xylem")
+
+xylem_n_files <- xylem_stats %>% filter(type == "n_files") 
+xylem_max_size <- xylem_stats %>% filter(type == "max_size")
+xylem_mean_size <- xylem_stats %>% filter(type == "mean_size")
+
+
+anatomy_plot(xylem_n_files, Title = "Xylem | n_files")
+anatomy_plot(xylem_max_size, Title = "Xylem | max_size")
+anatomy_plot(xylem_mean_size, Title = "Xylem | mean_size")
+```
+
+### Investigate the total xylem area
+
+```{r}
+xylem <- subset(xylem_max_size, select = c("plant_id", "gen_id", "segment", "gtype", "segment2"))
+
+xylem$MaxSize <- xylem_max_size$value
+xylem$MeanSize <- xylem_mean_size$value
+xylem$nFiles <- xylem_n_files$value
+
+xylem$TotArea <- xylem$MeanSize*xylem$nFiles
+xylem$TotAreaLog <- log10(xylem$TotArea)
+
+# GGPLOT
+ggplot(data = xylem,
+       aes(x = segment, 
+           y = TotAreaLog,
+           # color = gen_id,
+           fill = gen_id)) +
+  geom_point(aes(color = gen_id)) +
+  geom_boxplot() +
+  
+  theme_bw() +
+  
+  theme(axis.line = element_line(color='black'),
+        
+          # Remove grid
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          
+          # Change font
+          text = element_text(family = "A"))
+  
+```
+
+### Xylem tot area along the root
+
+```{r}
+ggplot(data = xylem,
+       aes(x = segment2, 
+           y = TotAreaLog,
+           # color = gen_id,
+           fill = gen_id)) +
+  
+  # POINTS
+  geom_point(aes(x = segment2,
+                 y = TotAreaLog,
+                 color = gen_id),
+             color = "grey") +
+
+  # geom_point(aes(x = segment2,
+  #                y = SteleLD,
+  #                color = gen_id),
+  #            color = "grey") +
+  
+  # CURVES
+  geom_smooth(aes(x = segment2,
+                y = TotAreaLog,
+                color = gen_id),
+              se = T,
+              alpha = 0.1,
+              method = lm,
+              formula = y ~ x
+              ) +
+  
+  # geom_smooth(aes(x = segment2,
+  #                 y = SteleLD,
+  #                 color = gen_id
+  #                 ),
+  #             linetype = "twodash",
+  #             se = T,
+  #             #method = lm,
+  #             alpha = 0.1) +
+
+  
+  # geom_boxplot(aes(factor(segment2))) +
+  
+  theme_bw() +
+  theme(axis.line = element_line(color='black'),
+        
+          # Remove grid
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          
+          # Change font
+          text = element_text(family = "A"))
+```
+
+### Analytical stats
+
+```{r}
+xylem2 <- xylem %>% filter(segment == "S2")
+xylem3 <- xylem %>% filter(segment == "S3")
+xylem4 <- xylem %>% filter(segment == "S4")
+```
+
+1)  nFiles
+
+```{r}
+# n_files
+xylem_lm1 <- lm(data = xylem,
+                formula = nFiles ~ segment + gen_id)
+
+summary(xylem_lm1)
+anova(xylem_lm1)
+```
+
+Conclusions : segment have a significant effect. Genotype not really
+
+2)  Mean_size
+
+```{r}
+xylem_lm2 <- lm(data = xylem,
+                formula = MeanSize ~ segment + gen_id)
+
+summary(xylem_lm2)
+anova(xylem_lm2)
+```
+
+seems that gen_id not signific for all segements, but for separated segments?
+
+```{r}
+
+print("SEGMENT 2")
+xylem_lm3a <- lm(data = xylem2,
+                 formula = MeanSize ~ gen_id)
+
+summary(xylem_lm3a)
+anova(xylem_lm3a)
+
+##################################################################
+print("SEGMENT3")
+xylem_lm3b <- lm(data = xylem3,
+                 formula = MeanSize ~ gen_id)
+
+summary(xylem_lm3b)
+anova(xylem_lm3b)
+
+##################################################################
+print("SEGMENT4")
+xylem_lm3c <- lm(data = xylem4,
+                 formula = MeanSize ~ gen_id)
+
+summary(xylem_lm3c)
+anova(xylem_lm3c)
+
+##################################################################
+```
+
+seems that gen_id has effect for 4 and 3 segments
+
+3)  Tot Area
+
+```{r}
+xylem_lm4 <- lm(data = xylem,
+                formula = TotAreaLog ~ segment + gen_id)
+
+summary(xylem_lm4)
+anova(xylem_lm4)
+
+```
+
+Xylem tot area signific different between gen_id and segments !!
+
+## 2. Stele
+
+```{r}
+stele_stats <- anatomy_full %>% filter(name == "stele")
+
+stele_cell_diameter <- stele_stats %>% filter(type == "cell_diameter") 
+stele_layer_diameter <- stele_stats %>% filter(type == "layer_diameter")
+stele_mean_size <- stele_stats %>% filter(type == "mean_size")
+stele_n_layers <- stele_stats %>% filter(type == "n_layers")
+stele_SD <- stele_stats %>% filter(type == "SD")
+stele_totarea <- stele_stats %>% filter(type == "totarea")
+
+anatomy_plot(stele_cell_diameter, Title = "Stele | cell_diameter")
+anatomy_plot(stele_layer_diameter, Title = "Stele | layer_diameter")
+anatomy_plot(stele_mean_size, Title = "Stele | mean_size")
+anatomy_plot(stele_n_layers, Title = "Stele | n_layers")
+anatomy_plot(stele_SD, Title = "Stele | SD")
+anatomy_plot(stele_totarea, Title = "Stele | totarea")
+```
+
+TotAreaLog
+
+```{r}
+Stele <- subset(stele_cell_diameter, select = c("plant_id", "gen_id", "segment", "gtype"))
+Stele$CellDiameter <- stele_cell_diameter$value
+Stele$LayerDiameter <- stele_layer_diameter$value
+Stele$MeanSize <- stele_mean_size$value
+Stele$nLayers <- stele_n_layers$value
+Stele$SD <- stele_SD$value
+Stele$TotArea <- stele_totarea$value
+
+Stele$TotAreaLog <- log10(Stele$TotArea)
+
+# GGPLOT
+ggplot(data = Stele,
+       aes(x = segment, 
+           y = TotAreaLog,
+           # color = gen_id,
+           fill = gen_id)) +
+  geom_point(aes(color = gen_id)) +
+  geom_boxplot() +
+  
+  theme_bw() +
+  
+  theme(axis.line = element_line(color='black'),
+        
+          # Remove grid
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          
+          # Change font
+          text = element_text(family = "A"))
+```
+
+Analytical stats
+
+1)  TotAreaLog
+
+```{r}
+stele_lm1 <- lm(data = Stele,
+                formula = TotAreaLog ~ segment + gen_id)
+
+summary(stele_lm1)
+anova(stele_lm1)
+```
+
+2)  Layer diameter
+
+```{r}
+stele_lm2 <- lm(data = Stele,
+                formula = LayerDiameter ~ segment + gen_id)
+
+summary(stele_lm2)
+anova(stele_lm2)
+```
+
+3)  Mean cell size
+
+```{r}
+stele_lm3 <- lm(data = Stele,
+                formula = MeanSize ~ segment + gen_id)
+
+summary(stele_lm3)
+anova(stele_lm3)
+```
+
+## 3. Phloem
+
+```{r}
+phloem_stats <- anatomy_full %>% filter(name == "phloem")
+
+phloem_n_files <- phloem_stats %>% filter(type == "n_files") 
+phloem_max_size <- phloem_stats %>% filter(type == "max_size")
+phloem_proportion <- phloem_stats %>% filter(type == "proportion")
+
+anatomy_plot(phloem_n_files, Title = "Phloem | n_files")
+anatomy_plot(phloem_max_size, Title = "Phloem | max_size")
+anatomy_plot(phloem_proportion, Title = "Phloem | proportion")
+```
+
+Phloem analytical stats
+
+```{r}
+Phloem <- subset(phloem_n_files, select = c("plant_id", "gen_id", "segment", "gtype"))
+Phloem$NFiles <- phloem_n_files$value
+Phloem$MaxSize  <- phloem_max_size$value
+Phloem$Proportion  <- phloem_proportion$value
+```
+
+NFiles
+
+```{r}
+phloem_lm1 <- lm(data = Phloem,
+                 formula = NFiles ~ segment + gen_id)
+summary(phloem_lm1)
+anova(phloem_lm1)
+```
+
+MaxSize
+
+```{r}
+phloem_lm2 <- lm(data = Phloem,
+                 formula = MaxSize ~ segment + gen_id)
+summary(phloem_lm2)
+anova(phloem_lm2)
+```
+
+Proportion
+
+```{r}
+phloem_lm3 <- lm(data = Phloem,
+                 formula = Proportion ~ segment + gen_id)
+summary(phloem_lm3)
+anova(phloem_lm3)
+```
+
+## 4. Pericycle
+
+```{r}
+pericycle_stats <- anatomy_full %>% filter(name == "pericycle")
+
+pericycle_cell_diameter <- pericycle_stats %>% filter(type == "cell_diameter") 
+
+anatomy_plot(pericycle_cell_diameter, Title = "Pericycle | cell_diameter")
+```
+
+Anatomical stats
+
+```{r}
+Pericycle <- subset(pericycle_cell_diameter, select = c("plant_id", "gen_id", "segment", "gtype"))
+Pericycle$CellDiameter <- pericycle_cell_diameter$value
+
+pericycle_lm <- lm(data = Pericycle,
+                   formula = CellDiameter ~ segment + gen_id)
+
+summary(pericycle_lm)
+anova(pericycle_lm)
+```
+
+5.  Endodermis
+
+```{r}
+endodermis_stats <- anatomy_full %>% filter(name == "endodermis")
+
+endodermis_barrier <- endodermis_stats %>% filter(type == "barrier")
+endodermis_cell_diameter <- endodermis_stats %>% filter(type == "cell_diameter")
+
+anatomy_plot(endodermis_barrier, Title = "Endodermis | barrier")
+anatomy_plot(endodermis_cell_diameter, Title = "Endodermis | cell_diameter")
+```
+
+```{r}
+Endodermis <- subset(endodermis_barrier, select = c("plant_id", "gen_id", "segment", "gtype"))
+Endodermis$Barriers <- endodermis_barrier$value
+Endodermis$CellDiameter  <- endodermis_cell_diameter$value
+
+
+print("Cell Diameter")
+endo_lm1 <- lm(data = Endodermis,
+               formula = CellDiameter ~ segment + gen_id)
+
+summary(endo_lm1)
+anova(endo_lm1)
+
+
+```
+
+## 6. Cortex
+
+```{r}
+cortex_stats <- anatomy_full %>% filter(name == "cortex")
+
+cortex_n_layers <- cortex_stats %>% filter(type == "n_layers") 
+cortex_cell_diameter <- cortex_stats %>% filter(type == "cell_diameter")
+
+anatomy_plot(cortex_n_layers, Title = "Cortex | n_layers")
+anatomy_plot(cortex_cell_diameter, Title = "Cortex | cell_diameter")
+```
+
+Layer Diameter = cell_diameter \* nLayers
+
+```{r}
+Cortex <- subset(cortex_cell_diameter, select = c("plant_id", "gen_id", "segment", "gtype","segment2"))
+Cortex$nLayers <- cortex_n_layers$value
+Cortex$CellDiameter <- cortex_cell_diameter$value
+
+Cortex$LayerDiameter <- Cortex$CellDiameter*Cortex$nLayers
+
+# GGPLOT
+ggplot(data = Cortex,
+       aes(x = segment, 
+           y = LayerDiameter,
+           # color = gen_id,
+           fill = gen_id)) +
+  geom_point(aes(color = gen_id)) +
+  geom_boxplot() +
+  
+  theme_bw() +
+  
+  theme(axis.line = element_line(color='black'),
+        
+          # Remove grid
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          
+          # Change font
+          text = element_text(family = "A"))
+
+```
+
+Layer diameter curve graph
+
+```{r}
+ggplot(data = Cortex,
+       aes(x = segment2, 
+           y = LayerDiameter,
+           # color = gen_id,
+           fill = gen_id)) +
+  
+  # POINTS
+  geom_point(aes(x = segment2,
+                 y = LayerDiameter,
+                 color = gen_id),
+             color = "grey") +
+
+  # geom_point(aes(x = segment2,
+  #                y = SteleLD,
+  #                color = gen_id),
+  #            color = "grey") +
+  
+  # CURVES
+  geom_smooth(aes(x = segment2,
+                y = LayerDiameter,
+                color = gen_id),
+              se = T,
+              alpha = 0.1,
+              method = lm,
+              formula = y ~ x + I(x^2)
+              ) +
+  
+  # geom_smooth(aes(x = segment2,
+  #                 y = SteleLD,
+  #                 color = gen_id
+  #                 ),
+  #             linetype = "twodash",
+  #             se = T,
+  #             #method = lm,
+  #             alpha = 0.1) +
+
+  
+  # geom_boxplot(aes(factor(segment2))) +
+  
+  theme_bw() +
+  theme(axis.line = element_line(color='black'),
+        
+          # Remove grid
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          
+          # Change font
+          text = element_text(family = "A"))
+```
+
+Cortex analytical stats
+
+1)  Cell diameter
+
+```{r}
+cortex_lm1 <- lm(data = Cortex,
+                 formula = CellDiameter ~ segment + gen_id)
+
+summary(cortex_lm1)
+anova(cortex_lm1)
+```
+
+2)  nLayers
+
+```{r}
+cortex_lm2 <- lm(data = Cortex,
+                 formula = nLayers ~ segment + gen_id)
+
+summary(cortex_lm2)
+anova(cortex_lm2)
+```
+
+3)  LayerDiameter
+
+```{r}
+cortex_lm3 <- lm(data = Cortex,
+                 formula = LayerDiameter ~ segment + gen_id + segment:gen_id)
+
+summary(cortex_lm3)
+anova(cortex_lm3)
+```
+
+## Compare cortex and stele layer diameter
+
+```{r}
+SteleCortex <- subset(Stele, select = c("plant_id", "gen_id", "segment", "gtype"))
+SteleCortex$SteleLD <- Stele$LayerDiameter
+SteleCortex$CortexLD <- Cortex$LayerDiameter
+
+# Set segment as numeric
+SteleCortex$segment2 <- 1
+SteleCortex$segment2[SteleCortex$segment == "S2"] = 2
+SteleCortex$segment2[SteleCortex$segment == "S3"] = 3
+SteleCortex$segment2[SteleCortex$segment == "S4"] = 4
+
+# GGPLOT
+ggplot(data = SteleCortex,
+       aes(x = segment2, 
+           y = CortexLD,
+           # color = gen_id,
+           fill = gen_id)) +
+  
+  # POINTS
+  # geom_point(aes(x = segment2,
+  #                y = CortexLD,
+  #                color = gen_id),
+  #            color = "grey") +
+  # 
+  # geom_point(aes(x = segment2,
+  #                y = SteleLD,
+  #                color = gen_id),
+  #            color = "grey") +
+  
+  # CURVES
+  geom_smooth(aes(x = segment2,
+                y = CortexLD,
+                color = gen_id),
+              se = T,
+              alpha = 0.1,
+              method = lm,
+              formula = y ~ x + I(x^2),
+              ) +
+  
+  geom_smooth(aes(x = segment2,
+                  y = SteleLD,
+                  color = gen_id
+                  ),
+              linetype = "twodash",
+              se = T,
+              method = lm,
+              formula = y ~ x + I(x^2),
+              alpha = 0.1) +
+
+  
+  # geom_boxplot(aes(factor(segment2))) +
+  
+  theme_bw() +
+  theme(axis.line = element_line(color='black'),
+        
+          # Remove grid
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          
+          # Change font
+          text = element_text(family = "A"))
+```
+
+## Compare radius
+
+```{r}
+SteleRadius <- anatomy_DB %>% filter(name == "stele" & type == "radius")
+CortexRadius <- anatomy_DB %>% filter(name == "cortex" & type == "radius")
+
+RadiusStats <- subset(SteleRadius, select = c("plant_id", "gen_id", "segment", "gtype"))
+RadiusStats$SteleRadius <- SteleRadius$value
+RadiusStats$CortexRadius <- CortexRadius$value
+
+# Set segment as numeric
+RadiusStats$segment2 <- 1
+RadiusStats$segment2[RadiusStats$segment == "S2"] = 2
+RadiusStats$segment2[RadiusStats$segment == "S3"] = 3
+RadiusStats$segment2[RadiusStats$segment == "S4"] = 4
+```
+
+Plot
+
+```{r}
+# GGPLOT
+ggplot(data = RadiusStats,
+       aes(x = segment2, 
+           y = SteleRadius,
+           # color = gen_id,
+           fill = gen_id)) +
+  
+  # POINTS
+  # geom_point(aes(x = segment2,
+  #                y = SteleRadius,
+  #                color = gen_id),
+  #            color = "grey") +
+  # 
+  # geom_point(aes(x = segment2,
+  #                y = CortexRadius,
+  #                color = gen_id),
+  #            color = "grey") +
+  
+  # CURVES
+  geom_smooth(aes(x = segment2,
+                y = SteleRadius,
+                color = gen_id),
+              se = T,
+              alpha = 0.1,
+              method = lm,
+              formula = y ~ x + I(x^2),
+              ) +
+  
+  geom_smooth(aes(x = segment2,
+                  y = CortexRadius,
+                  color = gen_id
+                  ),
+              linetype = "twodash",
+              se = T,
+              method = lm,
+              formula = y ~ x + I(x^2),
+              alpha = 0.1) +
+  
+  facet_wrap(~ gen_id) +
+  
+  
+  # geom_boxplot(aes(factor(segment2))) +
+  
+  theme_bw() +
+  theme(axis.line = element_line(color='black'),
+        
+          # Remove grid
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          
+          # Change font
+          text = element_text(family = "A"))
+```
+
+## 7. Exodermis
+
+```{r}
+exodermis_stats <- anatomy_full %>% filter(name == "exodermis")
+
+exodermis_barrier <- exodermis_stats %>% filter(type == "barrier")
+exodermis_cell_diameter <- exodermis_stats %>% filter(type == "cell_diameter")
+
+anatomy_plot(exodermis_barrier, Title = "Exodermis | barrier")
+anatomy_plot(exodermis_cell_diameter, Title = "Exodermis | cell_diameter")
+```
+stats 
+
+```{r}
+exodermis <- subset(exodermis_barrier, select = c("plant_id", "gen_id", "segment", "gtype"))
+exodermis$barrier <- exodermis_barrier$value
+exodermis$CellDiameter <- exodermis_cell_diameter$value
+
+exo_lm <- lm(data = exodermis,
+             formula = CellDiameter ~ segment + gen_id)
+
+summary(exo_lm)
+anova(exo_lm)
+```
+
+
+## 8. Epidermis
+
+```{r}
+epidermis_stats <- anatomy_full %>% filter(name == "epidermis")
+
+epidermis_cell_diameter <- epidermis_stats %>% filter(type == "cell_diameter")
+
+anatomy_plot(epidermis_cell_diameter, Title = "Epidermis | cell_diameter")
+```
+
+stats
+
+```{r}
+epidermis <- subset(epidermis_stats, select = c("plant_id", "gen_id", "segment", "gtype"))
+epidermis$CellDiameter <- epidermis_cell_diameter$value
+
+epi_lm <- lm(data = epidermis,
+             formula = CellDiameter ~ segment + gen_id)
+
+summary(epi_lm)
+anova(epi_lm)
+```
+
+
+# PCA
+
+Let's make a biiiiig file to do a PCA
+
+First we will classify parameters and put an simple id to it
+
+```{r}
+# temp <- anatomy_full %>% filter(id == 1)
+# temp <- subset(temp, select = c(name,type))
+# temp$param_id <- 0
+# 
+# for(i in seq(1:length(temp$name))){
+#   temp[i,]$param_id <- paste0("param_",i)
+# }
+# 
+# Param_table <- temp
+# write.csv(Param_table, "Data/Param_table.csv")
+```
+
+Import param table
+
+```{r}
+Param_table <- read.csv("Data/Param_table.csv")
+Param_table <- subset(Param_table, select = -X)
+```
+
+Import CrossSections
+
+```{r}
+CrossSections <- read.csv("Data/CrossSections.csv")
+CrossSections <- subset(CrossSections, select = -X)
+```
+
+```{r}
+# test <- merge(anatomy_full, Param_table, by = c("name", "type"))
+# test <- merge(test, CrossSections, by = c("plant_id", "segment", "cut","zoom", "repetition"))
+# 
+# test <- subset(test, select = c(CS_id, param_id, value))
+# 
+# Anatomy_table <- test
+# write_csv(Anatomy_table, "Data/Anatomy_table.csv")
+
+Anatomy_table <- read.csv("Data/Anatomy_table.csv")
+```
+
+Create PCA table
+
+```{r}
+PCA_table <- data.frame(CS_id = c())
+
+
+
+####
+
+for(i in unique(Anatomy_table$CS_id)){
+  subtemp <- Anatomy_table %>% filter(CS_id == i)
+  temp <- data.frame(CS_id = i,
+                     param_1 = subtemp$value[subtemp$param_id == "param_1"],
+                     param_2 = subtemp$value[subtemp$param_id == "param_2"],
+                     param_3 = subtemp$value[subtemp$param_id == "param_3"],
+                     param_4 = subtemp$value[subtemp$param_id == "param_4"],
+                     param_5 = subtemp$value[subtemp$param_id == "param_5"],
+                     param_6 = subtemp$value[subtemp$param_id == "param_6"],
+                     param_7 = subtemp$value[subtemp$param_id == "param_7"],
+                     param_8 = subtemp$value[subtemp$param_id == "param_8"],
+                     param_9 = subtemp$value[subtemp$param_id == "param_9"],
+                     param_10 = subtemp$value[subtemp$param_id == "param_10"],
+                     param_11 = subtemp$value[subtemp$param_id == "param_11"],
+                     param_12 = subtemp$value[subtemp$param_id == "param_12"],
+                     param_13 = subtemp$value[subtemp$param_id == "param_13"],
+                     param_14 = subtemp$value[subtemp$param_id == "param_14"],
+                     param_15 = subtemp$value[subtemp$param_id == "param_15"],
+                     param_16 = subtemp$value[subtemp$param_id == "param_16"],
+                     param_17 = subtemp$value[subtemp$param_id == "param_17"],
+                     param_18 = subtemp$value[subtemp$param_id == "param_18"],
+                     param_19 = subtemp$value[subtemp$param_id == "param_19"],
+                     param_20 = subtemp$value[subtemp$param_id == "param_20"],
+                     param_21 = subtemp$value[subtemp$param_id == "param_21"],
+                     param_22 = subtemp$value[subtemp$param_id == "param_22"],
+                     param_23 = subtemp$value[subtemp$param_id == "param_23"],
+                     param_24 = subtemp$value[subtemp$param_id == "param_24"],
+                     param_25 = subtemp$value[subtemp$param_id == "param_25"],
+                     param_26 = subtemp$value[subtemp$param_id == "param_26"],
+                     param_27 = subtemp$value[subtemp$param_id == "param_27"],
+                     param_28 = subtemp$value[subtemp$param_id == "param_28"],
+                     param_29 = subtemp$value[subtemp$param_id == "param_29"],
+                     param_30 = subtemp$value[subtemp$param_id == "param_30"],
+                     param_31 = subtemp$value[subtemp$param_id == "param_31"],
+                     param_32 = subtemp$value[subtemp$param_id == "param_32"],
+                     param_33 = subtemp$value[subtemp$param_id == "param_33"],
+                     param_34 = subtemp$value[subtemp$param_id == "param_34"],
+                     param_35 = subtemp$value[subtemp$param_id == "param_35"],
+                     param_36 = subtemp$value[subtemp$param_id == "param_36"])
+
+
+  PCA_table <- rbind(PCA_table, temp)
+}
+
+write_csv(PCA_table, "Data/PCA_table.csv")
+```
+
+# PCA
+
+```{r}
+# Load data
+PCA_table <- read_csv("Data/PCA_table.csv")
+
+# Process to PCA
+PCA_table$CS_id <- as.factor(PCA_table$CS_id)
+Group = PCA_table$CS_id
+PCA_table <- subset(PCA_table, select = -CS_id)
+PCA_table <- subset(PCA_table, select = -c(param_1,
+                                           param_2,
+                                           param_3,
+                                           param_4,
+                                           param_5,
+                                           param_9,
+                                           param_15,
+                                           param_17,
+                                           param_19,
+                                           param_20,
+                                           param_22,
+                                           param_23,
+                                           param_25,
+                                           param_26,
+                                           param_28,
+                                           param_29,
+                                           param_30,
+                                           param_31,
+                                           param_34,
+                                           param_35
+                                           ))
+
+# PCA
+pairs(PCA_table, col = Group, main = "Scatter Plot", cex=0.5, pch = 20)
+
+resACP <- prcomp(PCA_table, center = TRUE, scale = TRUE)
+```
+
+```{r}
+round(get_eig(resACP), 4)
+summary(resACP)
+```
+
+```{r}
+resACP$rotation[,1:2]
+
+var <-get_pca_var(resACP)
+var$cor[,1:2]
+
+fviz_pca_var(resACP, axes = c(1,2))
+```
+
+```{r}
+fviz_pca_ind(resACP, axes=c(1,2), geam.ind="point", col.ind=Group, legend.title="Marque", addEllipses = TRUE)
+```
+
+```{r}
+res.dist <- get_dist(PCA_table, method = "euclidean")
+fviz_dist(res.dist,order=FALSE)
+```
+
+```{r}
+library(GGally)
+
+ggcorr(data = PCA_table)
+```
+
+# Xylem topology
+
+```{r}
+xylem_topo <- anatomy_DB %>% filter(name == "Xylem", type == c("XM", "YM")) 
+
+xylem_topo$repetition <- as.numeric(xylem_topo$repetition)
+
+xylem_topo2 <- merge(xylem_topo,
+                     CrossSections,
+                     by = c("plant_id", "segment", "cut","zoom","repetition"))
+
+
+```

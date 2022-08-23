@@ -1,0 +1,851 @@
+---
+title: "Data management and architecture"
+author: "Marco D'Agostino"
+date: "14/03/2022"
+output:
+  html_document:
+    smart: FALSE
+    code_folding: hide #  Cache le code  
+    collapsed: yes # Crée un document unique 
+    fig_caption: yes # Figures encapsulées ? 
+    fig_height: 5 # Hauteur par défaut des figures
+    fig_width: 6 # Largeur par défaut des figures
+    highlight: tango # Style de mise en valeur du code
+    number_sections: yes # Ajout table des matières 
+    theme: united  # Style du document
+    toc: yes # Table des matiere ?
+    toc_depth: 3  # Profondeur table des matières<
+    toc_float: yes # Table des matières flottante a
+editor_options:
+  chunk_output_type: console
+---
+
+```{r echo=TRUE,include=FALSE}
+# R Chunks options
+knitr::opts_chunk$set(comment="")
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) # Set working directory to the current file
+rm(list = ls())
+
+# Packages
+require(readxl)
+require(pander)
+require(dplyr)
+require(car)
+require(Hmisc)
+require(EnvStats)
+require(emmeans)
+require(visreg)
+require(sjplot)
+require(FactoMineR)
+require(factoextra)
+require(ggplot2)
+library(viridis)
+library(hrbrthemes)
+require(knitr)
+require(gridExtra)
+require(extrafont)
+require(sjPlot)
+require(epitools)
+require(corrplot)
+require(NbClust)
+require(pastecs)
+require(kohonen)
+require(data.table)
+
+# Functions
+source("functions.R")
+
+# Fonts
+windowsFonts(A = windowsFont("Cambria"))
+```
+
+# Data preparation
+
+The database design is the following : ![](Data/Design%20DB.png)
+
+# Option 1 : create tables
+
+## Create table "Length"
+
+```{r}
+# # Load data
+# data1 <- read_xlsx("Data/Data Archi.xlsx")
+# data1$date <- as.factor(data1$date)
+# data1$plant_id <- as.factor(data1$plant_id)
+# 
+# # Remove Na row
+# data2 <- data.frame()
+# len <- length(data1[[1]])
+# 
+# for(i in seq(1,len)){
+#   temp <- data1[i,]
+#   if(is.na(temp$length) == F){
+#     data2 <- rbind(data2, temp)
+#   }
+# }
+# 
+# # Final assignment
+# Length <- data2
+# rm("data2")
+# write.csv(Length, "Data/Length.csv")
+```
+
+## Create table "Genotypes"
+
+```{r}
+# Genotypes <- data.frame(genotype = c("LA0114",
+#                                      "LA0391",
+#                                      "LA1332",
+#                                      "LA1599",
+#                                      "LA1692",
+#                                      "LA1687",
+#                                      "Money Maker"),
+#                         gen_id = c("A",
+#                                    "B",
+#                                    "C",
+#                                    "D",
+#                                    "E",
+#                                    "F",
+#                                    "G"),
+#                         gtype = c("w",
+#                                   "w",
+#                                   "w",
+#                                   "w",
+#                                   "w",
+#                                   "w",
+#                                   "d"))
+# 
+# write.csv(Genotypes, "Data/Genotypes.csv")
+```
+
+## Create table "Plants"
+
+```{r}
+# rep <- c("01","02","03","04","05","06","07","08","09","10","11","12")
+# gen <- c("A", "B", "C", "D", "E", "F", "G")
+# 
+# Plants <- data.frame(gen_id = c(),
+#                      repetition = c(),
+#                      plant_id = c(),
+#                      gtype = c())
+# 
+# for(i in gen){
+#   for(j in rep) {
+#     id <- paste0(i,j)
+# 
+#     temp <- data.frame(gen_id = i,
+#                         repetition = j,
+#                         plant_id = id)
+# 
+#     Plants <- rbind(Plants,temp)
+#   }
+# }
+# 
+# write.csv(Plants, "Data/Plants.csv")
+# rm("rep", "gen", "temp")
+```
+
+## Create table "Surface"
+
+```{r}
+# # If data not clean ; load XLSX 
+# Surface <- read_xlsx("Data/Data SF.xlsx")
+# 
+# ## Remove Na row
+# Surface2 <- data.frame()
+# len <- length(Surface[[1]])
+# 
+# for(i in seq(1,len)){
+#   temp <- Surface[i,]
+#   if(is.na(temp$surface) == F){
+#     Surface2 <- rbind(Surface2, temp)
+#   }
+# }
+# 
+# Surface <- Surface2
+# #write.csv(Surface, "Data/Surface.csv")
+```
+
+# Option 2 : read csv
+
+```{r}
+Length <- read.csv("Data/Plants.csv")
+Length <- subset(Length, select = -X) #readcsv put a X column
+
+Genotypes <- read.csv("Data/Genotypes.csv")
+Genotypes <- subset(Genotypes, select = -X)
+
+Plants <- read.csv("Data/Plants.csv")
+Plants <- subset(Plants, select = -X)
+
+Surface <- read.csv("Data/Surface.csv")
+Surface <- subset(Surface, select = -X)
+```
+
+## Merge data to have all the info
+
+```{r}
+# data_full <- merge(Length, Plants, by = "plant_id")
+# data_full <- merge(data_full, Genotypes, by = "gen_id")
+# 
+# # Add a column "day" to convert date into numbers
+# data_full$day <- 0
+# data_full$day[data_full$date == "2022-03-04"] <- 14
+# data_full$day[data_full$date == "2022-03-08"] <- 18
+# data_full$day[data_full$date == "2022-03-11"] <- 21
+# data_full$day[data_full$date == "2022-03-15"] <- 25
+# 
+# data_full$genotype <- as.factor(data_full$genotype)
+# data_full$gen_id <- as.factor(data_full$gen_id)
+# data_full$date <- as.factor(data_full$date)
+```
+
+## Remove outliers
+
+```{r}
+# # Remove Outliers
+# 
+# data_full_clean <- data_full[0,]
+# 
+# ## Per date
+# for(i in levels(data_full$date)){
+#   
+#   ## Per genotype
+#   for(j in levels(data_full$gen_id)){
+#     data_temp <- data_full %>% filter(date == i, gen_id == j)
+#     ET <- sd(data_temp$length)
+#     Mean <- mean(data_temp$length)
+#     clean_temp <- data_temp[data_temp$length %between% c(Mean - 2*ET, Mean + 2*ET),]
+#     data_full_clean <- rbind(data_full_clean, clean_temp)
+#     
+#     #print(paste0("i : ",i," | j : ",j))
+#     #print(paste0("ET : ",ET," | Mean : ", Mean))
+#   }
+# }
+# 
+# data_full <- data_full_clean
+```
+
+Remove the plants that are not complete on timeline
+
+```{r}
+# data_full_clean <- data_frame()
+# 
+# for (i in unique(data_full$plant_id)){
+#   temp <- data_full %>% filter(plant_id == i)
+#   if (length(temp$date) == 4){
+#     data_full_clean <- rbind(data_full_clean, temp)
+#   }
+# }
+# 
+# data_full <- data_full_clean
+```
+
+# Export full architectural data
+
+```{r}
+# write.csv(data_full_clean, "Data/Length_full.csv")
+```
+
+# Data analysis
+
+Import data (if not yet created)
+
+```{r}
+data_full <- read.csv("Data/Length_full.csv")
+data_full <- subset(data_full, select = -X)
+```
+
+## Select and find means for genotypes and for date
+
+```{r}
+Means <- data.frame(date = c(),
+                    genotype = c(),
+                    mean = c())
+
+for (d in levels(data_full$date)) {
+  for (g in levels(data_full$genotype)){
+    # print(c(date, gen))
+    temp <- data.frame(date = d,
+                       genotype = g,
+                       mean = mean(
+                         (data_full %>% filter(date == d, genotype == g))$length)
+                      )
+    Means <- rbind(Means,temp)
+    
+  }
+}
+```
+
+## Individual plots
+
+```{r}
+for(i in c(14,18,21,25)){
+  temp <- data_full %>% filter(day == i)
+  temp2 <- temp %>% ggplot( aes(x=gen_id, y=length, fill=gen_id)) +
+    # Boxplot
+    geom_boxplot() +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) + # Colors
+    geom_jitter(color="black", size=0.4, alpha=0.9) + # Add points
+    
+    # Theme params
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+      ) +
+    
+    theme_bw() +
+    
+    theme(axis.line = element_line(color='black'),
+        
+          # Remove grid
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          
+          # Change font
+          text = element_text(family = "A"),
+          
+          # Remove x ticks
+          #axis.text.x=element_blank(),
+          #axis.ticks.x=element_blank(),
+          
+          # Remove legend title
+          #legend.title=element_blank()
+          
+          # Remove legend
+          legend.position="none"
+          
+          # Remove panel borders 
+          #panel.border = element_blank()
+          ) +
+    
+    # Text
+    ggtitle(paste0("Maximum length at ", i, " days")) +
+    xlab("Genotype") +
+    ylab("Maximum root length [cm]")
+  
+  assign(paste0("plot_day_",i), temp2)
+  
+}
+
+plot_day_14
+plot_day_18
+plot_day_21
+plot_day_25
+```
+
+## Grouped Plots
+
+### Remove genotypes with NaN (dead during growth)
+
+We must have the four dates for each repetition
+
+```{r}
+dead_plants <- c()
+
+
+# Select dead plants (where the length is not the four dates)
+for(i in unique(data_full$plant_id)){
+  is_na = F
+  temp1 <- data_full %>% filter(plant_id == i)
+  if(length(temp1$date) != 4){
+    dead_plants <- append(dead_plants, i)
+  }
+}
+
+# Create a new df with the living plants
+data_full2 <- data_full[0,]
+for(i in unique(data_full$plant_id)){
+  if(i %in% dead_plants){
+  }else{
+    temp <- data_full %>% filter(plant_id == i)
+    data_full2 <- rbind(data_full2, temp)
+  }
+}
+
+data_full <- data_full2
+```
+
+### Box plot
+
+```{r}
+plot_test <-
+data_full %>%
+  ggplot( aes(x=gen_id, y=length, fill=gen_id)) +
+  geom_boxplot() +
+  
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  
+  theme_bw() +
+  theme(plot.title = element_text(size=11),
+        legend.position="bottom", 
+        axis.title.y=element_text(size=12, hjust=0.5, vjust=1), 
+        axis.text.y=element_text(size=8), 
+        #axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        
+        # Remove grid
+        plot.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        
+        # Remove legend title
+        legend.title=element_blank(),
+        
+        # Change font
+        text = element_text(family = "A")
+  ) +
+  
+  xlab("Genotype")+
+  ylab("Maximum root length [cm]") +
+  ylim(0,35)+
+  
+  #abs(fill = "Genotype")+
+  
+  facet_wrap(~date, nrow = 1)
+
+plot_test
+```
+
+### Growth curves per genotype
+
+```{r}
+# Enlève le genotype B car tout est mort
+data_full <- data_full %>% filter(gen_id != "B")
+
+ggplot(data = data_full, aes(x = day, y = length, group = gen_id, color = gen_id)) +
+  
+  #geom_point() +
+  
+  geom_smooth(method=lm , 
+              formula = y ~ x + I(x^2),
+              #color="red", 
+              fill="#fcc603", 
+              se=T,
+              alpha = 0.1) +
+  
+  # Axis params
+  scale_x_continuous(name = "Time after germination [day]", 
+                     breaks = scales::pretty_breaks(n = 5)) +
+  scale_y_continuous(name="Maximum length [cm]") +
+  
+  #facet_wrap(~gen_id, nrow = 3) +
+  
+  # Theme params
+  theme_bw() +
+  theme(axis.line = element_line(color='black'),
+        plot.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(family = "A"),
+        #panel.border = element_blank()
+        ) 
+
+################################################################
+```
+
+
+```{r}
+data_full_day <- data_full
+
+ggplot(data = data_full, aes(x = day, 
+                             y = length, 
+                             color = gtype, 
+                             group = gtype)) +
+  geom_point() +
+  # geom_boxplot(aes(x = factor(day),
+  #                  y = length,
+  #                  fill = gtype)) +
+  geom_smooth( aes(x = day,
+                   y = length,
+                   color = gtype,
+                   group = gtype),
+              method=lm ,
+              formula = y ~ x + I(x^2) ,
+              #color="red",
+              fill="#69b3a2",
+              se=TRUE) +
+  
+  scale_colour_manual(values = c("w" = "#f8766d", "d" = "#00bfc4")) +
+  scale_x_continuous(name = "Time after germination [day]", breaks = scales::pretty_breaks(n = 5)) +
+  scale_y_continuous(name="Maximum length [cm]") +
+  #facet_wrap(~gen_id, nrow = 3) +
+  theme_bw() +
+  theme(axis.line = element_line(color='black'),
+        plot.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(family = "A"),
+        #panel.border = element_blank()
+        ) 
+
+```
+
+### Statistical anamysis
+
+1) Modele linéaire
+
+```{r}
+GR_mod <- lm(data = data_full,
+             formula = length ~ day + gtype + day:gtype)
+summary(GR_mod)
+anova(GR_mod)
+```
+
+
+
+2) Modele quadratique
+
+```{r}
+GR_mod2 <- lm(data = data_full,
+              formula = length ~ day + I(day^2) + gtype + day:gtype)
+summary(GR_mod2)
+anova(GR_mod2)
+
+```
+
+
+### Growth curves per plant
+
+```{r}
+ggplot(data = data_full, aes(x = day, y = length, group = plant_id, color = gen_id)) +
+  
+  # Display points
+  geom_point() +
+  
+  # Display regression lines
+  geom_smooth(method=lm, 
+              formula = y ~ x,
+              #color = genotype, 
+              fill="#69b3a2", 
+              #se=F,
+              fullrange = T) +
+  
+  # Split in facets
+  facet_wrap(~gen_id, ncol= 3) +
+  guides(color = "none") +
+  
+  # Adjust ticks
+  scale_x_continuous(name = "Time after germination [day]", breaks = scales::pretty_breaks(n = 5)) +
+  scale_y_continuous(name="Maximum length [cm]", 
+                     #limits = c(0,40)
+                     ) +
+  
+  #xlim(c(14,25)) +
+  #ylim(c(0,30)) +
+  
+  # Theme 
+  scale_color_brewer(palette="Dark2") +
+  theme_bw() +
+  theme(axis.line = element_line(color='black'),
+        plot.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(family = "A"),
+        #panel.border = element_blank()
+        ) 
+
+```
+
+```{r}
+ggplot(data = data_full, aes(x = day, y = length, group = plant_id, color = genotype)) +
+  #geom_point() +
+  geom_smooth(method=lm, 
+              formula = y ~ x + I(x^2),
+              #color = genotype, 
+              fill="#69b3a2", 
+              se=F,
+              fullrange = T) +
+  #facet_wrap(~genotype, nrow = 2) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) +
+  scale_color_brewer(palette="Dark2") +
+  #xlim(c(14,25)) +
+  #ylim(c(0,50)) +
+  theme_bw() +
+  theme(#x = element_blank(),
+        axis.line = element_line(color='black'),
+        plot.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+        ) 
+```
+
+## Create "Growth_Rate" table
+
+```{r}
+Growth_Rate <- data.frame(gen_id = c(),
+                         growth_rate = c(),
+                         intercept = c())
+
+for(i in unique(data_full$plant_id)){
+ temp <- data_full %>% filter(plant_id == i)
+ temp_slope <- coef(lm(temp$length ~ temp$day))[2]
+ temp2 <- data.frame(plant_id = i,
+                     growth_rate = temp_slope[[1]])
+ 
+ Growth_Rate <- rbind(Growth_Rate, temp2)
+}
+
+Growth_Rate <- merge(Growth_Rate, Plants, by = "plant_id")
+Growth_Rate <- merge(Growth_Rate, Genotypes, by = "gen_id")
+```
+
+plot growth rates
+
+```{r}
+ggplot(data = Growth_Rate, aes(x = gtype, y = growth_rate, fill = gtype)) +
+# Points :
+    geom_boxplot() +
+
+    # Colors :
+    scale_color_brewer(palette="Dark2") +
+    # scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    #geom_jitter(color="black", size=0.4, alpha=0.9) +
+    #theme_ipsum() +
+
+    # Theme params :
+    theme(
+      
+    ) +
+    theme_bw() +
+    
+    theme(axis.line = element_line(color='black'),
+          plot.background = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          text = element_text(family = "A"),
+          #axis.text.x=element_blank(),
+            #axis.ticks.x=element_blank(),
+            legend.position="none",
+            plot.title = element_text(size=11),
+            legend.title=element_blank(),
+            #panel.border = element_blank()
+            ) +
+      #ggtitle("Leaf Surface [cm^2]") +
+      xlab("Genotype") +
+      ylab("Growth Rate [cm/j]") 
+```
+
+## Stats on growth rate
+
+```{r}
+gr_lm <- lm(data = Growth_Rate, formula = growth_rate ~ gen_id)
+summary(gr_lm)
+anova(gr_lm)
+```
+
+-\> for all genotypes, the GR are not significantly different
+
+Anova for wild tomato :
+
+```{r}
+subset1 <- Growth_Rate %>% filter(gen_id != "G")
+gr_lm2 <- lm(data = subset1,
+             formula = growth_rate ~ gen_id)
+summary(gr_lm2)
+anova(gr_lm2)
+```
+
+Anova wild vs domestic :
+
+```{r}
+subset2 <- merge(Growth_Rate, Genotypes, by = "gen_id")
+gr_lm3 <- lm(data = subset2,
+             formula = growth_rate ~ gtype)
+summary(gr_lm3)
+anova(gr_lm3)
+```
+
+Seems like licopersicum is significantly different then wild tomatos.
+
+## Leaf surface
+
+```{r}
+Surface_full <- merge(Surface, Plants, by = "plant_id")
+Surface_full <- merge(Surface_full, Genotypes, by = "gen_id") 
+
+Surface_full %>% ggplot( aes(x=gen_id, y= surface, fill=gen_id)) +
+                    # Points :
+                    geom_boxplot() +
+  
+                    # Colors :
+                    scale_color_brewer(palette="Dark2") +
+                    #scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+                    geom_jitter(color="black", size=0.4, alpha=0.9) +
+                    #theme_ipsum() +
+    
+                    # Theme params :
+                    theme(
+                      
+                    ) +
+                    theme_bw() +
+                    theme(axis.line = element_line(color='black'),
+                          plot.background = element_blank(),
+                          panel.grid.major = element_blank(),
+                          panel.grid.minor = element_blank(),
+                          text = element_text(family = "A"),
+                          #axis.text.x=element_blank(),
+                          #axis.ticks.x=element_blank(),
+                          legend.position="none",
+                          plot.title = element_text(size=11)
+                          #legend.title=element_blank(),
+                          #panel.border = element_blank()
+                          ) +
+                    #ggtitle("Leaf Surface [cm^2]") +
+                    xlab("Genotype") +
+                    ylab("Leaf Surface [cm^2]") 
+
+
+Surface_full %>% ggplot( aes(x=gtype, y= surface, fill=gtype)) +
+                    # Points :
+                    geom_boxplot() +
+  
+                    # Colors :
+                    scale_color_brewer(palette="Dark2") +
+                    # scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+                    #geom_jitter(color="black", size=0.4, alpha=0.9) +
+                    #theme_ipsum() +
+    
+                    # Theme params :
+                    theme(
+                      
+                    ) +
+                    theme_bw() +
+                    theme(axis.line = element_line(color='black'),
+                          plot.background = element_blank(),
+                          panel.grid.major = element_blank(),
+                          panel.grid.minor = element_blank(),
+                          text = element_text(family = "A"),
+                          #axis.text.x=element_blank(),
+                          #axis.ticks.x=element_blank(),
+                          legend.position="none",
+                          plot.title = element_text(size=11)
+                          #legend.title=element_blank(),
+                          #panel.border = element_blank()
+                          ) +
+                    #ggtitle("Leaf Surface [cm^2]") +
+                    xlab("Genotype") +
+                    ylab("Leaf Surface [cm^2]") 
+                    
+```
+
+stats for all genotypes :
+
+```{r}
+surface_lm <- lm(data = Surface_full,
+                 formula = surface ~ gen_id)
+summary(surface_lm)
+anova(surface_lm)
+```
+
+stats inside Wild
+
+```{r}
+surface_subset1 <- Surface_full %>% filter(gtype == "w")
+surface_lm1 <- lm(data = surface_subset1,
+                 formula = surface ~ gen_id)
+summary(surface_lm1)
+anova(surface_lm1)
+```
+
+-\> Inside wild genotypes, surfaces are not significantly differents
+
+Wild vs Domestic :
+
+```{r}
+surface_lm2 <- lm(data = Surface_full,
+                  formula = surface ~ gtype)
+summary(surface_lm2)
+anova(surface_lm2)
+```
+
+Wild and Domestic are significantly differents
+
+## Plot length % area
+
+```{r}
+Length <- data_full
+
+Length$date <- as.factor(Length$date)
+Max_length <- Length %>% filter(date == max(levels(Length$date)))
+temp <- merge(Max_length[c("plant_id","length")], Surface_full[c("plant_id","surface")], by = "plant_id")
+Length_Leaf <- merge(temp, Plants[c("plant_id","gen_id")])
+
+for (i in Length_Leaf[,1]){
+  temp <- Length_Leaf %>% filter(plant_id == i)
+  ratio <- temp$surface/temp$length
+  Length_Leaf$ratio[Length_Leaf$plant_id == i] = ratio
+}
+```
+
+```{r}
+Length_Leaf %>% ggplot(aes(x = gen_id, y = ratio, fill = gen_id)) +
+                geom_boxplot() +
+                theme_bw() +
+                
+                theme(axis.line = element_line(color='black'),
+                    plot.background = element_blank(),
+                    panel.grid.major = element_blank(),
+                    panel.grid.minor = element_blank(),
+                    text = element_text(family = "A"),
+                    legend.position = "none"
+                    #panel.border = element_blank()
+                    ) +
+                scale_color_brewer(palette="Dark2") +
+                scale_fill_viridis(discrete = TRUE, alpha=0.6)  # Colors
+                
+```
+
+```{r}
+Length_Leaf %>% ggplot(aes(x = length, y = surface, color =  gen_id)) +
+                geom_point(aes(color=gen_id), size = 5) +
+                #stat_ellipse() +
+                theme_bw() +
+  
+                scale_x_continuous(name = "Maximum root length") +
+                scale_y_continuous(name ="Leaf surface") +
+  
+                scale_color_brewer(palette="Dark2") +
+                theme(axis.line = element_line(color='black'),
+                          plot.background = element_blank(),
+                          panel.grid.major = element_blank(),
+                          panel.grid.minor = element_blank(),
+                          text = element_text(family = "A"),
+                          #axis.text.x=element_blank(),
+                          #axis.ticks.x=element_blank(),
+                          legend.title=element_blank(),
+                          #panel.border = element_blank()
+                          ) 
+              
+
+```
+
+# Surface - growth rate
+
+```{r}
+SurfaceGR <- merge(Surface, Growth_Rate, by = "plant_id")
+
+ggplot(data = SurfaceGR, aes(x = growth_rate, y = surface, color = gtype))+
+  geom_point(aes(color=gtype), size = 5) +
+  stat_ellipse(level = 0.9, geom = "polygon", aes(fill = gtype), alpha = 0.25) +
+  theme_bw() +
+
+  scale_x_continuous(name = "Growth Rate [cm/day]") +
+  scale_y_continuous(name ="Leaf surface [cm^2]") +
+
+  scale_color_manual(values = c("d" = "#f8766d", "w" = "#00bfc4")) + 
+  theme(axis.line = element_line(color='black'),
+            plot.background = element_blank(),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            text = element_text(family = "A"),
+            #axis.text.x=element_blank(),
+            #axis.ticks.x=element_blank(),
+            legend.title=element_blank()
+            #panel.border = element_blank()
+            ) 
+```

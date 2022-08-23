@@ -1,0 +1,281 @@
+---
+title: "Anatomy 2"
+author: "Marco D'Agostino"
+date: "06/05/2022"
+output:
+  html_document:
+    smart: FALSE
+    code_folding: hide #  Cache le code  
+    collapsed: yes # Crée un document unique 
+    fig_caption: no # Figures encapsulées ? 
+    fig_height: 5 # Hauteur par défaut des figures
+    fig_width: 6 # Largeur par défaut des figures
+    highlight: tango # Style de mise en valeur du code
+    number_sections: yes # Ajout table des matières 
+    theme: united  # Style du document
+    toc: yes # Table des matiere ?
+    toc_depth: 3  # Profondeur table des matières<
+    toc_float: yes # Table des matières flottante a
+editor_options:
+  chunk_output_type: html
+---
+
+```{r echo=TRUE,include=FALSE}
+# R Chunks options
+knitr::opts_chunk$set(comment="")
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) # Set working directory to the current file
+rm(list = ls())
+
+# Packages
+require(readxl)
+require(pander)
+require(dplyr)
+require(car)
+require(Hmisc)
+require(EnvStats)
+require(emmeans)
+require(visreg)
+require(sjplot)
+require(FactoMineR)
+require(factoextra)
+require(ggplot2)
+library(viridis)
+library(hrbrthemes)
+require(knitr)
+require(gridExtra)
+require(extrafont)
+require(sjPlot)
+require(epitools)
+require(corrplot)
+require(NbClust)
+require(pastecs)
+require(kohonen)
+require(data.table)
+require(tidyverse)
+library("SciViews")
+
+library(sp)
+library(xml2)
+library(plyr)
+library(deldir)
+library(alphahull)
+library(cowplot)
+library(retistruct)
+library(Hmisc)
+
+
+# Load functions
+source("functions.R")
+
+# Fonts
+windowsFonts(A = windowsFont("Cambria"))
+```
+
+# 1. Data preparation for GRANAR
+
+## Option 1 : Create data from quantifications
+
+Set directory to the folder of the quantification files and make a loop and stock every xlsx file
+
+```{r}
+# Path to quantifications
+q_path <- "Data/Quantification/clean/"
+
+# Make a list of all files names
+list <- list.files(path = q_path, pattern = "xlsx")
+
+# Initiate the loop
+anatomy_full <- data.frame()
+
+for(i in seq(1:length(list))){
+
+    # Generate the row of ids
+    temp_df <- extract_ids(list, i)
+
+    # Extract data
+    path = paste0(q_path, list[i])
+    data_all <- extract_all(path)
+
+    # Merge ids and data
+    merged1 <- merge(temp_df, data_all)
+    anatomy_full <- rbind(anatomy_full, merged1)
+}
+
+Plants <- read_csv("Data/Plants.csv")
+Plants <- Plants[,c(2,4)]
+
+Genotypes <- read.csv("Data/Genotypes.csv")
+Genotypes <- subset(Genotypes, select = -X)
+
+anatomy_full <- merge(x = anatomy_full, y = Plants,
+                      by = "plant_id")
+
+anatomy_full <- merge(x = anatomy_full, y = Genotypes[,c(2,3)],
+                      by = "gen_id")
+```
+
+The file *anatomy_full* contains the parameters of GRANAR for each segment of each plant.
+
+Export data :
+
+```{r}
+write.csv(anatomy_full, "Data/Anatomy.csv")
+```
+
+Create CS_id table
+
+```{r}
+CrossSections <- data.frame()
+
+for(i in unique(anatomy_full$id)){
+  temp <- anatomy_full %>% filter(id == i)
+  temp <- temp[1,]
+  temp_id <- paste0(temp$plant_id,
+                    "_",
+                    temp$segment,
+                    "_",
+                    temp$cut,
+                    "_",
+                    temp$zoom,
+                    "_",
+                    temp$repetition)
+
+  tempDF <- data.frame(CS_id = c(temp_id),
+                       plant_id = c(temp$plant_id),
+                       segment = c(temp$segment),
+                       cut = c(temp$cut),
+                       zoom = c(temp$zoom),
+                       repetition = c(temp$repetition))
+
+  CrossSections <- rbind(CrossSections, tempDF)
+}
+
+write.csv(CrossSections,"Data/CrossSections.csv")
+```
+
+## Option 2 : Load CSV file with anatomic data
+
+```{r}
+anatomy_full <- read.csv("Data/Anatomy.csv")
+anatomy_full <- anatomy_full[,-1] # remove first column
+
+CrossSections <- read.csv("Data/CrossSections.csv")
+CrossSections <- subset(CrossSections, select = -X)
+```
+
+# 2. GRANAR
+
+## Import functions
+
+GRANAR1 :
+
+```{r}
+# source("granar/io_function.R")
+# source("granar/aer_in_geom_xml.R")
+# source("granar/create_anatomy.R")
+# source("granar/get_root_section.R")
+source("granar/granar_metadata.R")
+# source("granar/make_it3d.R")
+# source("granar/plot_3d_root.R")
+source("granar/plot_anatomy.R")
+# source("granar/read_param_xml.R")
+# source("granar/write_anatomy_obj.R")
+source("granar/write_anatomy_xml_pv.R")
+#source("granar/write_param_xml.R")
+source("granar/write_param_xml2.R")
+# 
+# id = 1
+# params_example <- data_all %>% filter(id == id)
+
+```
+
+GRANAR2 :
+
+```{r}
+# Load GRANAR2
+source("granar/GRANAR6.R")
+```
+
+## Example of single GRANAR run
+
+### Option 1 : from existing xml
+
+```{r}
+param_test <- read_param_xml("Params/A07_S3.xml")
+```
+
+### Option 2 : from the anatomy_full data
+
+Write params into the folder Params
+
+```{r}
+for(i in unique(anatomy_full$id)){
+
+  name <- paste0(unique(anatomy_full$plant_id[anatomy_full$id == i]),
+                 "_",
+                 unique(anatomy_full$segment[anatomy_full$id == i]))
+
+  param_test <- anatomy_full %>% filter(id == i)
+  param_test <- subset(param_test, select = c(name, type, value))
+  t_path <- paste0("Params/", name, ".xml")
+  write_param_xml2(param_test, t_path)
+  }
+```
+
+### Run GRANAR
+
+```{r}
+sim <- create_anatomy(parameters =  param_test)
+
+plot_anatomy(sim)
+
+
+# write_anatomy_xml(sim = sim, path = "Anatomies/sim2.xml")
+```
+
+## Loop to generate cross sections
+
+```{r}
+for (i in unique(anatomy_full$id)){
+  
+  print(paste0("Generating anatomy ", i))
+  
+  # Extract data
+  param_temp <- anatomy_full %>% filter(id == i)
+  param_temp <- param_temp[c(7,8,9)]
+  
+  t <- data.frame(name = c("planttype"),
+                   type = c("param"), 
+                   value = c(2.0))
+  
+  
+  param_temp <- rbind(param_temp, t)
+  
+  #write_to_xml
+  
+  try(TSim <- create_anatomy(parameters = param_temp))
+  print("Anatomy successfully generated")
+  
+  plot_anatomy(TSim)
+  
+  TPath <- paste0("Anatomies/", i, ".xml")
+  write_anatomy_xml(sim = TSim, path = TPath)
+  
+  
+}
+```
+
+loop for the params in the file Params
+
+```{r}
+param_list <- list.files(path = "Params/", pattern = "xml")
+
+for(i in param_list){
+  temp_param <- read_param_xml(path = paste0("Params/", i ))
+  sim <- create_anatomy(parameters = temp_param)
+  plot_anatomy(sim)
+}
+```
+
+# 
